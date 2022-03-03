@@ -2,7 +2,6 @@ package assert
 
 import (
 	"fmt"
-	"io"
 
 	"github.com/nikandfor/assert/is"
 )
@@ -10,9 +9,7 @@ import (
 type (
 	TestingT interface{}
 
-	Checker interface {
-		Check(io.Writer) bool
-	}
+	Checker = is.Checker
 
 	helper interface {
 		Helper()
@@ -62,6 +59,10 @@ func Any(t TestingT, c []Checker, args ...interface{}) bool {
 }
 
 func Fail(t TestingT, args ...interface{}) {
+	if h, ok := t.(helper); ok {
+		h.Helper()
+	}
+
 	var b wbuf
 
 loop:

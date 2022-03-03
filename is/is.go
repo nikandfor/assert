@@ -48,16 +48,4 @@ func ErrorIs(err, target error) Checker {
 	})
 }
 
-func Equal(a, b interface{}) Checker {
-	return CheckerFunc(func(w io.Writer) bool {
-		if a == b {
-			return true
-		}
-
-		fmt.Fprintf(w, "Not equal:\nExpected: %#v\nActual:   %#v", a, b)
-
-		return false
-	})
-}
-
 func (f CheckerFunc) Check(w io.Writer) bool { return f(w) }
