@@ -70,13 +70,16 @@ loop:
 		switch a := a.(type) {
 		case wbuf:
 			b = append(b, a...)
+			b.Newline()
 		case []wbuf:
 			for _, a := range a {
 				b = append(b, a...)
+				b.Newline()
 			}
 		case string:
 			fmt.Fprintf(&b, a, args[i+1:]...)
-			b = append(b, '\n')
+
+			b.Newline()
 
 			break loop
 		}
@@ -94,6 +97,38 @@ loop:
 	if t, ok := t.(fail); ok {
 		t.Fail()
 	}
+}
+
+func True(t TestingT, ok bool, args ...interface{}) bool {
+	if h, ok := t.(helper); ok {
+		h.Helper()
+	}
+
+	return Eval(t, is.True(ok), args...)
+}
+
+func False(t TestingT, ok bool, args ...interface{}) bool {
+	if h, ok := t.(helper); ok {
+		h.Helper()
+	}
+
+	return Eval(t, is.False(ok), args...)
+}
+
+func Nil(t TestingT, x interface{}, args ...interface{}) bool {
+	if h, ok := t.(helper); ok {
+		h.Helper()
+	}
+
+	return Eval(t, is.Nil(x), args...)
+}
+
+func NotNil(t TestingT, x interface{}, args ...interface{}) bool {
+	if h, ok := t.(helper); ok {
+		h.Helper()
+	}
+
+	return Eval(t, is.NotNil(x), args...)
 }
 
 func NoError(t TestingT, err error, args ...interface{}) bool {
@@ -124,4 +159,12 @@ func (w *wbuf) Write(p []byte) (int, error) {
 	*w = append(*w, p...)
 
 	return len(p), nil
+}
+
+func (w *wbuf) Newline() {
+	if l := len(*w); l == 0 || (*w)[l-1] == '\n' {
+		return
+	}
+
+	*w = append(*w, '\n')
 }

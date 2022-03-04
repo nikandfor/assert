@@ -18,6 +18,54 @@ type (
 	}
 )
 
+func True(ok bool) Checker {
+	return CheckerFunc(func(w io.Writer) bool {
+		if ok {
+			return true
+		}
+
+		fmt.Fprintf(w, "Want true")
+
+		return false
+	})
+}
+
+func False(ok bool) Checker {
+	return CheckerFunc(func(w io.Writer) bool {
+		if !ok {
+			return true
+		}
+
+		fmt.Fprintf(w, "Want false")
+
+		return false
+	})
+}
+
+func Nil(x interface{}) Checker {
+	return CheckerFunc(func(w io.Writer) bool {
+		if x == nil {
+			return true
+		}
+
+		fmt.Fprintf(w, "Want nil, got: %v", x)
+
+		return false
+	})
+}
+
+func NotNil(x interface{}) Checker {
+	return CheckerFunc(func(w io.Writer) bool {
+		if x != nil {
+			return true
+		}
+
+		fmt.Fprintf(w, "Want not nil")
+
+		return false
+	})
+}
+
 func NoError(err error) Checker {
 	return CheckerFunc(func(w io.Writer) bool {
 		if err == nil {

@@ -12,10 +12,6 @@ type ()
 
 func Equal(a, b interface{}) Checker {
 	return CheckerFunc(func(w io.Writer) bool {
-		if a == b {
-			return true
-		}
-
 		var buf bytes.Buffer
 
 		eq := deep.Diff(&buf, a, b)
