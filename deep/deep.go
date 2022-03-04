@@ -16,6 +16,42 @@ type (
 		pref []byte
 		add  bool
 	}
+
+	visit struct {
+		a, b unsafe.Pointer
+		typ  reflect.Type
+	}
+
+	// rtype is the common implementation of most values.
+	// It is embedded in other struct types.
+	//
+	// rtype must be kept in sync with ../runtime/type.go:/^type._type.
+	rtype struct {
+		size       uintptr
+		ptrdata    uintptr // number of bytes in the type that can contain pointers
+		hash       uint32  // hash of type; avoids computation in hash tables
+		tflag      tflag   // extra type information flags
+		align      uint8   // alignment of variable with this type
+		fieldAlign uint8   // alignment of struct field with this type
+		kind       uint8   // enumeration for C
+		// function for comparing objects of this type
+		// (ptr to object A, ptr to object B) -> ==?
+		equal     func(unsafe.Pointer, unsafe.Pointer) bool
+		gcdata    *byte   // garbage collection data
+		str       nameOff // string form
+		ptrToThis typeOff // type for pointer to this type, may be zero
+	}
+
+	tflag uint8
+
+	nameOff int32
+	typeOff int32
+
+	value struct {
+		typ  *rtype
+		ptr  unsafe.Pointer
+		flag uintptr
+	}
 )
 
 var spaces = "                                                                          "
@@ -24,22 +60,86 @@ func Equal(a, b interface{}) bool {
 	av := reflect.ValueOf(a)
 	bv := reflect.ValueOf(b)
 
-	return equal(av, bv)
+	return equal(av, bv, nil)
 }
 
 func Diff(w io.Writer, a, b interface{}) bool {
 	av := reflect.ValueOf(a)
 	bv := reflect.ValueOf(b)
 
-	return equal(av, bv)
+	return equal(av, bv, nil)
 }
 
-func equal(a, b reflect.Value) bool {
+func equal(a, b reflect.Value, visited map[visit]struct{}) bool {
 	if !a.IsValid() || !b.IsValid() {
 		return a.IsValid() == b.IsValid()
 	}
 	if a.Type() != b.Type() {
 		return false
+	}
+
+	// The hard part is taken from reflect.DeepEqual
+
+	// We want to avoid putting more in the visited map than we need to.
+	// For any possible reference cycle that might be encountered,
+	// hard(v1, v2) needs to return true for at least one of the types in the cycle,
+	// and it's safe and valid to get Value's internal pointer.
+	hard := func(v1, v2 reflect.Value) bool {
+		switch v1.Kind() {
+		case reflect.Ptr:
+			if ptrdata(v1) == 0 {
+				// go:notinheap pointers can't be cyclic.
+				// At least, all of our current uses of go:notinheap have
+				// that property. The runtime ones aren't cyclic (and we don't use
+				// DeepEqual on them anyway), and the cgo-generated ones are
+				// all empty structs.
+				return false
+			}
+
+			fallthrough
+		case reflect.Map, reflect.Slice, reflect.Interface:
+			// Nil pointers cannot be cyclic. Avoid putting them in the visited map.
+			return !v1.IsNil() && !v2.IsNil()
+		}
+
+		return false
+	}
+
+	if hard(a, b) {
+		// For a Ptr or Map value, we need to check flagIndir,
+		// which we do by calling the pointer method.
+		// For Slice or Interface, flagIndir is always set,
+		// and using v.ptr suffices.
+		ptrval := func(v reflect.Value) unsafe.Pointer {
+			switch v.Kind() {
+			case reflect.Ptr, reflect.Map:
+				return valuePointer(v)
+			default:
+				return (*value)(unsafe.Pointer(&v)).ptr
+			}
+		}
+
+		addr1 := ptrval(a)
+		addr2 := ptrval(b)
+		if uintptr(addr1) > uintptr(addr2) {
+			// Canonicalize order to reduce number of entries in visited.
+			// Assumes non-moving garbage collector.
+			addr1, addr2 = addr2, addr1
+		}
+
+		// Short circuit if references are already seen.
+		typ := a.Type()
+		v := visit{a: addr1, b: addr2, typ: typ}
+		if _, ok := visited[v]; ok {
+			return true
+		}
+
+		if visited == nil {
+			visited = make(map[visit]struct{})
+		}
+
+		// Remember for later.
+		visited[v] = struct{}{}
 	}
 
 	for a.Kind() == reflect.Ptr {
@@ -59,7 +159,11 @@ func equal(a, b reflect.Value) bool {
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
 		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
 		reflect.Uintptr, reflect.UnsafePointer,
-		reflect.String:
+		reflect.Float64, reflect.Float32,
+		reflect.Complex128, reflect.Complex64,
+		reflect.String,
+		reflect.Chan,
+		reflect.Bool:
 
 		return eface(a) == eface(b)
 
@@ -71,19 +175,19 @@ func equal(a, b reflect.Value) bool {
 			return false
 		}
 
-		return equal(a.Elem(), b.Elem())
+		return equal(a.Elem(), b.Elem(), visited)
 	case reflect.Slice, reflect.Array:
-		return equalSlice(a, b)
+		return equalSlice(a, b, visited)
 
 	case reflect.Struct:
-		return equalStructFields(a, b)
+		return equalStructFields(a, b, visited)
 
 	default:
 		panic(fmt.Sprintf("%v", a.Kind()))
 	}
 }
 
-func equalStructFields(a, b reflect.Value) bool {
+func equalStructFields(a, b reflect.Value, visited map[visit]struct{}) bool {
 	t := a.Type()
 
 	for i := 0; i < t.NumField(); i++ {
@@ -95,7 +199,7 @@ func equalStructFields(a, b reflect.Value) bool {
 			continue
 		}
 
-		if !equal(a.Field(i), b.Field(i)) {
+		if !equal(a.Field(i), b.Field(i), visited) {
 			return false
 		}
 	}
@@ -103,13 +207,13 @@ func equalStructFields(a, b reflect.Value) bool {
 	return true
 }
 
-func equalSlice(a, b reflect.Value) bool {
+func equalSlice(a, b reflect.Value, visited map[visit]struct{}) bool {
 	if a.Len() != b.Len() {
 		return false
 	}
 
 	for i := 0; i < a.Len(); i++ {
-		if !equal(a.Index(i), b.Index(i)) {
+		if !equal(a.Index(i), b.Index(i), visited) {
 			return false
 		}
 	}
@@ -370,3 +474,10 @@ func (w *prefixWriter) Write(p []byte) (n int, err error) {
 func eface(x reflect.Value) interface{} {
 	return *(*interface{})(unsafe.Pointer(&x))
 }
+
+func ptrdata(v reflect.Value) uintptr {
+	return (*value)(unsafe.Pointer(&v)).typ.ptrdata
+}
+
+//go:linkname valuePointer reflect.Value.pointer
+func valuePointer(v reflect.Value) unsafe.Pointer

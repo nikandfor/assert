@@ -78,10 +78,28 @@ func NoError(err error) Checker {
 	})
 }
 
+func Error(err error) Checker {
+	return CheckerFunc(func(w io.Writer) bool {
+		if err != nil {
+			return true
+		}
+
+		fmt.Fprintf(w, "Want error")
+
+		return false
+	})
+}
+
 func ErrorIs(err, target error) Checker {
 	return CheckerFunc(func(w io.Writer) bool {
 		if errors.Is(err, target) {
 			return true
+		}
+
+		if err == nil {
+			fmt.Fprintf(w, "Want error: %q (type %T)", target.Error(), target)
+
+			return false
 		}
 
 		fmt.Fprintf(w, "Error chain\n")

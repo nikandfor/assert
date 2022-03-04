@@ -139,6 +139,14 @@ func NoError(t TestingT, err error, args ...interface{}) bool {
 	return Eval(t, is.NoError(err), args...)
 }
 
+func Error(t TestingT, err error, args ...interface{}) bool {
+	if h, ok := t.(helper); ok {
+		h.Helper()
+	}
+
+	return Eval(t, is.Error(err), args...)
+}
+
 func ErrorIs(t TestingT, err, target error, args ...interface{}) bool {
 	if h, ok := t.(helper); ok {
 		h.Helper()
