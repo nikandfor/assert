@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"reflect"
 )
 
 type (
@@ -46,6 +47,12 @@ func Nil(x interface{}) Checker {
 	return CheckerFunc(func(w io.Writer) bool {
 		if x == nil {
 			return true
+		}
+
+		r := reflect.ValueOf(x)
+
+		if k := r.Kind(); k == reflect.Ptr || k == reflect.Interface || k == reflect.Slice || k == reflect.Map || k == reflect.Chan || k == reflect.Func {
+			return r.IsNil()
 		}
 
 		fmt.Fprintf(w, "Want nil, got: %v", x)

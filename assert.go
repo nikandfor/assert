@@ -58,6 +58,29 @@ func Any(t TestingT, c []Checker, args ...interface{}) bool {
 	return false
 }
 
+func All(t TestingT, c []Checker, args ...interface{}) (ok bool) {
+	if h, ok := t.(helper); ok {
+		h.Helper()
+	}
+
+	bs := make([]wbuf, len(c))
+
+	ok = true
+
+	for i, c := range c {
+		if !c.Check(&bs[i]) {
+			ok = false
+			break
+		}
+	}
+
+	if !ok {
+		Fail(t, append([]interface{}{bs}, args...)...)
+	}
+
+	return ok
+}
+
 func Fail(t TestingT, args ...interface{}) {
 	if h, ok := t.(helper); ok {
 		h.Helper()
