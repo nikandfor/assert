@@ -3,8 +3,10 @@ package deep
 import (
 	"fmt"
 	"io"
+	"math/big"
 	"reflect"
 	"strings"
+	"time"
 	"unsafe"
 
 	"github.com/nikandfor/errors"
@@ -55,6 +57,11 @@ type (
 )
 
 var spaces = "                                                                          "
+
+var stop = map[reflect.Type]struct{}{
+	reflect.TypeOf(time.Time{}): struct{}{},
+	reflect.TypeOf(&big.Int{}):  struct{}{},
+}
 
 func Equal(a, b interface{}) bool {
 	av := reflect.ValueOf(a)
@@ -237,7 +244,17 @@ func fprint(w io.Writer, n int, x reflect.Value, d int) (m int, err error) {
 	//		fmt.Fprintf(os.Stderr, "fprint: n:%v  x:%v  from %v\n", m, x, loc.Caller(1))
 	//	}()
 
+	tp := x.Type()
+
+	if _, ok := stop[tp]; ok {
+		return writef(w, n, "%#v", x.Interface())
+	}
+
 	for x.Kind() == reflect.Ptr {
+		if x.IsNil() {
+			return writef(w, n, "(%v)(nil)", x.Type())
+		}
+
 		n, err = writef(w, n, "&")
 		if err != nil {
 			return
@@ -246,15 +263,27 @@ func fprint(w io.Writer, n int, x reflect.Value, d int) (m int, err error) {
 		x = x.Elem()
 	}
 
+	if _, ok := stop[tp]; ok {
+		return writef(w, n, "%#v", x.Interface())
+	}
+
 	switch x.Kind() {
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
 		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
 		reflect.Uintptr, reflect.UnsafePointer:
 
-		n, err = writef(w, n, "%v(%v)", x.Type(), x)
+		n, err = writef(w, n, "%v(0x%x)", x.Type(), x)
 	case reflect.String:
 		n, err = writef(w, n, "%q", x.String())
-	case reflect.Slice:
+	case reflect.Slice, reflect.Array:
+		if x.Kind() == reflect.Slice && x.IsNil() {
+			return writef(w, n, `%v(nil)`, tp)
+		}
+
+		if tp := x.Type(); tp.Elem().Kind() == reflect.Uint8 {
+			return writef(w, n, `%v(unhex("%x"))`, tp, x.Slice(0, x.Len()).Bytes())
+		}
+
 		n, err = writef(w, n, "%v", x.Type())
 		if err != nil {
 			return
@@ -282,7 +311,7 @@ func fprint(w io.Writer, n int, x reflect.Value, d int) (m int, err error) {
 			return
 		}
 
-		n, err = writef(w, n, " (kind: %v)\n", x.Kind())
+		n, err = writef(w, n, " (kind: %v)", x.Kind())
 	}
 
 	if err != nil {
@@ -312,6 +341,13 @@ func fprintStructFields(w io.Writer, n int, x reflect.Value, d int) (_ int, err 
 		n, err = writef(w, n, "%v: ", ft.Name)
 		if err != nil {
 			return
+		}
+
+		if l := len(ft.Name); l < 14 {
+			n, err = writef(w, n, "%v", spaces[:14-l])
+			if err != nil {
+				return
+			}
 		}
 
 		n, err = fprint(w, n, x.Field(i), d)
