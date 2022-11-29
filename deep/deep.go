@@ -189,8 +189,14 @@ func equal(a, b reflect.Value, visited map[visit]struct{}) bool {
 	case reflect.Struct:
 		return equalStructFields(a, b, visited)
 
+	case reflect.Map:
+		return equalMap(a, b, visited)
+
+	case reflect.Func:
+		return equalFunc(a, b, visited)
+
 	default:
-		panic(fmt.Sprintf("%v", a.Kind()))
+		panic(fmt.Sprintf("cannot compare %v", a.Kind()))
 	}
 }
 
@@ -202,11 +208,12 @@ func equalStructFields(a, b reflect.Value, visited map[visit]struct{}) bool {
 		if ft.Tag.Get("deep") == "-" {
 			continue
 		}
+
 		f, ok := getTag(ft, "deep", "compare")
 		switch {
 		case ok && f == "false":
 			continue
-		case ok && f == "ptr":
+		case ok && (f == "pointer" || f == "ptr"):
 			if a.Field(i).Pointer() != b.Field(i).Pointer() {
 				return false
 			}
@@ -234,6 +241,32 @@ func equalSlice(a, b reflect.Value, visited map[visit]struct{}) bool {
 	}
 
 	return true
+}
+
+func equalMap(a, b reflect.Value, visited map[visit]struct{}) bool {
+	if a.Len() != b.Len() {
+		return false
+	}
+
+	it := a.MapRange()
+
+	for it.Next() {
+		v := b.MapIndex(it.Key())
+
+		if !equal(it.Value(), v, visited) {
+			return false
+		}
+	}
+
+	return true
+}
+
+func equalFunc(a, b reflect.Value, visited map[visit]struct{}) bool {
+	if a.IsNil() && b.IsNil() {
+		return true
+	}
+
+	panic("can't compare funcs")
 }
 
 func Fprint(w io.Writer, x ...interface{}) (n int, err error) {
