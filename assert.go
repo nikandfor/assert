@@ -186,6 +186,30 @@ func Equal(t TestingT, exp, act interface{}, args ...interface{}) bool {
 	return Eval(t, is.Equal(exp, act), args...)
 }
 
+func NotEqual(t TestingT, exp, act interface{}, args ...interface{}) bool {
+	if h, ok := t.(helper); ok {
+		h.Helper()
+	}
+
+	return Eval(t, is.NotEqual(exp, act), args...)
+}
+
+func Zero(t TestingT, val interface{}, args ...interface{}) bool {
+	if h, ok := t.(helper); ok {
+		h.Helper()
+	}
+
+	return Eval(t, is.Zero(val), args...)
+}
+
+func NotZero(t TestingT, val interface{}, args ...interface{}) bool {
+	if h, ok := t.(helper); ok {
+		h.Helper()
+	}
+
+	return Eval(t, is.NotZero(val), args...)
+}
+
 func (w *wbuf) Write(p []byte) (int, error) {
 	*w = append(*w, p...)
 

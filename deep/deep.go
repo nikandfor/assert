@@ -202,7 +202,15 @@ func equalStructFields(a, b reflect.Value, visited map[visit]struct{}) bool {
 		if ft.Tag.Get("deep") == "-" {
 			continue
 		}
-		if v, ok := getTag(ft, "deep", "compare"); ok && v == "false" {
+		f, ok := getTag(ft, "deep", "compare")
+		switch {
+		case ok && f == "false":
+			continue
+		case ok && f == "ptr":
+			if a.Field(i).Pointer() != b.Field(i).Pointer() {
+				return false
+			}
+
 			continue
 		}
 
@@ -460,7 +468,7 @@ func getTag(x reflect.StructField, t, k string) (string, bool) {
 	tags := strings.Split(x.Tag.Get(t), ",")
 
 	for _, tag := range tags {
-		kv := strings.SplitN(tag, ":", 2)
+		kv := strings.SplitN(tag, "=", 2)
 		if kv[0] == k {
 			if len(kv) == 1 {
 				return "", true

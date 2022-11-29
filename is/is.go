@@ -121,4 +121,36 @@ func ErrorIs(err, target error) Checker {
 	})
 }
 
+func Zero(x interface{}) Checker {
+	return CheckerFunc(func(w io.Writer) bool {
+		if x == nil {
+			return true
+		}
+
+		r := reflect.ValueOf(x)
+
+		if r.IsZero() {
+			return true
+		}
+
+		fmt.Fprintf(w, "Want zero value, got: %v", x)
+
+		return false
+	})
+}
+
+func NotZero(x interface{}) Checker {
+	return CheckerFunc(func(w io.Writer) bool {
+		r := reflect.ValueOf(x)
+
+		if !r.IsZero() {
+			return true
+		}
+
+		fmt.Fprintf(w, "Want not zero value, got: %v", x)
+
+		return false
+	})
+}
+
 func (f CheckerFunc) Check(w io.Writer) bool { return f(w) }
