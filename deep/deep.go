@@ -2,11 +2,15 @@ package deep
 
 import (
 	"fmt"
+	"hash/crc32"
 	"io"
 	"math/big"
+	"os"
 	"reflect"
+	"strconv"
 	"strings"
 	"time"
+	"unicode"
 	"unsafe"
 
 	"github.com/nikandfor/errors"
@@ -54,13 +58,20 @@ type (
 		ptr  unsafe.Pointer
 		flag uintptr
 	}
+
+	formatter struct {
+		io.Writer
+		notnl bool
+	}
 )
 
 var spaces = "                                                                          "
 
 var stop = map[reflect.Type]struct{}{
-	reflect.TypeOf(time.Time{}): struct{}{},
-	reflect.TypeOf(&big.Int{}):  struct{}{},
+	reflect.TypeOf(time.Time{}):      struct{}{},
+	reflect.TypeOf(&time.Location{}): struct{}{},
+	reflect.TypeOf(&big.Int{}):       struct{}{},
+	reflect.TypeOf(&os.File{}):       struct{}{},
 }
 
 func Equal(a, b interface{}) bool {
@@ -270,8 +281,12 @@ func equalFunc(a, b reflect.Value, visited map[visit]struct{}) bool {
 }
 
 func Fprint(w io.Writer, x ...interface{}) (n int, err error) {
+	f := formatter{
+		Writer: w,
+	}
+
 	for i, x := range x {
-		n, err = fprint(w, n, reflect.ValueOf(x), 0)
+		n, err = f.print(n, reflect.ValueOf(x), 0, 10)
 		if err != nil {
 			return n, errors.Wrap(err, "%d", i)
 		}
@@ -280,23 +295,31 @@ func Fprint(w io.Writer, x ...interface{}) (n int, err error) {
 	return
 }
 
-func fprint(w io.Writer, n int, x reflect.Value, d int) (m int, err error) {
+func (f *formatter) print(n int, x reflect.Value, d, maxdepth int) (m int, err error) {
 	//	defer func() {
-	//		fmt.Fprintf(os.Stderr, "fprint: n:%v  x:%v  from %v\n", m, x, loc.Caller(1))
+	//		fmt.Fprintf(os.Stderr, "print: n:%v  x:%v  from %v\n", m, x, loc.Caller(1))
 	//	}()
+
+	if x == (reflect.Value{}) {
+		return f.writef(n, "nil")
+	}
 
 	tp := x.Type()
 
 	if _, ok := stop[tp]; ok {
-		return writef(w, n, "%#v", x.Interface())
+		return f.writef(n, "%#v", x.Interface())
+	}
+
+	if d == maxdepth {
+		return f.writef(n, "(%v)(omitted)", x.Type())
 	}
 
 	for x.Kind() == reflect.Ptr {
 		if x.IsNil() {
-			return writef(w, n, "(%v)(nil)", x.Type())
+			return f.writef(n, "(%v)(nil)", x.Type())
 		}
 
-		n, err = writef(w, n, "&")
+		n, err = f.writef(n, "&")
 		if err != nil {
 			return
 		}
@@ -305,54 +328,99 @@ func fprint(w io.Writer, n int, x reflect.Value, d int) (m int, err error) {
 	}
 
 	if _, ok := stop[tp]; ok {
-		return writef(w, n, "%#v", x.Interface())
+		return f.writef(n, "%#v", x.Interface())
 	}
 
+	named := x.Type().Name() != x.Kind().String()
+
 	switch x.Kind() {
+	case reflect.Bool:
+		if named {
+			n, err = f.writef(n, "%v(%v)", x.Type(), x.Bool())
+			break
+		}
+
+		n, err = f.writef(n, "%v", x.Bool())
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
 		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
 		reflect.Uintptr, reflect.UnsafePointer:
 
-		n, err = writef(w, n, "%v(0x%x)", x.Type(), x)
+		n, err = f.writef(n, "%v(0x%x)", x.Type(), x)
 	case reflect.String:
-		n, err = writef(w, n, "%q", x.String())
+		vf := "%q"
+		if x.Len() > 40 {
+			vf = "%-.40q"
+		}
+
+		if named {
+			n, err = f.writef(n, "%v("+vf+")", x.Type(), x.String())
+			break
+		}
+
+		n, err = f.writef(n, vf, x.String())
 	case reflect.Slice, reflect.Array:
 		if x.Kind() == reflect.Slice && x.IsNil() {
-			return writef(w, n, `%v(nil)`, tp)
+			return f.writef(n, `%v(nil)`, tp)
 		}
 
 		if tp := x.Type(); tp.Elem().Kind() == reflect.Uint8 {
-			return writef(w, n, `%v(unhex("%x"))`, tp, x.Slice(0, x.Len()).Bytes())
+			if x.Len() > 20 {
+				format := `unhex("%x", "total_len=%d,hash=%x")`
+				if isPrintable(x.Slice(0, 20).Bytes()) {
+					format = `%q, "total_len=%d,hash=%x"`
+				}
+
+				return f.writef(n, `%v(`+format+`)`, tp, x.Slice(0, 20).Bytes(), x.Len(), hashBytes(x.Slice(0, x.Len()).Bytes()))
+			}
+
+			format := `unhex("%x")`
+			if isPrintable(x.Slice(0, x.Len()).Bytes()) {
+				format = "%q"
+			}
+
+			return f.writef(n, `%v(`+format+`)`, tp, x.Slice(0, x.Len()).Bytes())
 		}
 
-		n, err = writef(w, n, "%v", x.Type())
+		n, err = f.writef(n, "%v", x.Type())
 		if err != nil {
 			return
 		}
 
-		n, err = fprintSlice(w, n, x, d+1)
+		n, err = f.printSlice(n, x, d+1, maxdepth)
 		if err != nil {
 			return
 		}
 	case reflect.Struct:
-		n, err = writef(w, n, "%v{\n", x.Type())
+		n, err = f.writef(n, "%v{\n", x.Type())
 		if err != nil {
 			return
 		}
 
-		n, err = fprintStructFields(w, n, x, d+1)
+		n, err = f.printStructFields(n, x, d+1, maxdepth)
 		if err != nil {
 			return
 		}
 
-		n, err = ident(w, n, d, "}")
+		n, err = f.ident(n, d, "}")
+	case reflect.Interface:
+		n, err = f.writef(n, "(%v)(", x.Type())
+		if err != nil {
+			return
+		}
+
+		n, err = f.print(n, x.Elem(), d+1, maxdepth)
+		if err != nil {
+			return
+		}
+
+		n, err = f.ident(n, d, ")")
 	default:
-		n, err = writef(w, n, "%v", x.Type())
+		n, err = f.writef(n, "%v", x.Type())
 		if err != nil {
 			return
 		}
 
-		n, err = writef(w, n, " (kind: %v)", x.Kind())
+		n, err = f.writef(n, " (kind: %v)", x.Kind())
 	}
 
 	if err != nil {
@@ -362,7 +430,7 @@ func fprint(w io.Writer, n int, x reflect.Value, d int) (m int, err error) {
 	return n, nil
 }
 
-func fprintStructFields(w io.Writer, n int, x reflect.Value, d int) (_ int, err error) {
+func (f *formatter) printStructFields(n int, x reflect.Value, d, maxdepth int) (_ int, err error) {
 	t := x.Type()
 
 	for i := 0; i < t.NumField(); i++ {
@@ -370,33 +438,43 @@ func fprintStructFields(w io.Writer, n int, x reflect.Value, d int) (_ int, err 
 		if ft.Tag.Get("deep") == "-" {
 			continue
 		}
-		if v, ok := getTag(ft, "deep", "print"); ok && v == "omit" {
+
+		fmaxdepth := maxdepth
+
+		v, ok := getTag(ft, "deep", "print")
+		switch {
+		case ok && v == "omit":
 			continue
+		case ok && strings.HasPrefix(v, "maxdepth="):
+			v, err := strconv.Atoi(v[len("maxdepth="):])
+			if err == nil && fmaxdepth > d+v {
+				fmaxdepth = d + v
+			}
 		}
 
-		n, err = ident(w, n, d, "")
+		n, err = f.ident(n, d, "")
 		if err != nil {
 			return
 		}
 
-		n, err = writef(w, n, "%v: ", ft.Name)
+		n, err = f.writef(n, "%v: ", ft.Name)
 		if err != nil {
 			return
 		}
 
 		if l := len(ft.Name); l < 14 {
-			n, err = writef(w, n, "%v", spaces[:14-l])
+			n, err = f.writef(n, "%v", spaces[:14-l])
 			if err != nil {
 				return
 			}
 		}
 
-		n, err = fprint(w, n, x.Field(i), d)
+		n, err = f.print(n, x.Field(i), d, fmaxdepth)
 		if err != nil {
 			return
 		}
 
-		n, err = writef(w, n, "\n")
+		n, err = f.writef(n, "\n")
 		if err != nil {
 			return
 		}
@@ -405,12 +483,12 @@ func fprintStructFields(w io.Writer, n int, x reflect.Value, d int) (_ int, err 
 	return n, nil
 }
 
-func fprintSlice(w io.Writer, n int, x reflect.Value, d int) (m int, err error) {
+func (f *formatter) printSlice(n int, x reflect.Value, d, maxdepth int) (m int, err error) {
 	t := x.Type().Elem()
 	k := t.Kind()
 
 	if x.IsNil() {
-		return writef(w, n, "(nil)")
+		return f.writef(n, "(nil)")
 	}
 
 	if k == reflect.Uint8 {
@@ -422,7 +500,7 @@ func fprintSlice(w io.Writer, n int, x reflect.Value, d int) (m int, err error) 
 		}
 
 		if ok*5/4 >= x.Len() {
-			return writef(w, n, "(%q)", x.Bytes())
+			return f.writef(n, "(%q)", x.Bytes())
 		}
 	}
 
@@ -431,23 +509,32 @@ func fprintSlice(w io.Writer, n int, x reflect.Value, d int) (m int, err error) 
 		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
 		reflect.Uintptr, reflect.UnsafePointer:
 
-		n, err = writef(w, n, "{")
+		n, err = f.writef(n, "{")
 		if err != nil {
 			return
 		}
 
 		for i := 0; i < x.Len(); i++ {
-			xx := x.Index(i)
-
 			if i != 0 {
-				n, err = writef(w, n, ", ")
+				n, err = f.writef(n, ", ")
 				if err != nil {
 					return
 				}
 			}
 
+			if i == 10 {
+				n, err = f.writef(n, "... %d elements", x.Len()-i)
+				if err != nil {
+					return
+				}
+
+				break
+			}
+
+			xx := x.Index(i)
+
 			if k == reflect.UnsafePointer {
-				n, err = writef(w, n, "0x%x", xx.Pointer())
+				n, err = f.writef(n, "0x%x", xx.Pointer())
 				if err != nil {
 					return
 				}
@@ -465,36 +552,67 @@ func fprintSlice(w io.Writer, n int, x reflect.Value, d int) (m int, err error) 
 				val = xx.Uint()
 			}
 
-			n, err = writef(w, n, "%v", val)
+			n, err = f.writef(n, "%v", val)
 			if err != nil {
 				return
 			}
 		}
 
-		n, err = writef(w, n, "}")
+		n, err = f.writef(n, "}")
 	default:
-		n, err = writef(w, n, "{elems}")
+		n, err = f.writef(n, "{")
+		if err != nil {
+			return
+		}
+
+		for i := 0; i < x.Len(); i++ {
+			if i != 0 {
+				n, err = f.writef(n, ", ")
+				if err != nil {
+					return
+				}
+			}
+
+			xx := x.Index(i)
+
+			n, err = f.print(n, xx, d+1, maxdepth)
+			if err != nil {
+				return
+			}
+		}
+
+		n, err = f.writef(n, "}")
 	}
 
 	return n, nil
 }
 
-func ident(w io.Writer, n, d int, fmt string, args ...interface{}) (_ int, err error) {
-	n, err = writef(w, n, "%s", spaces[:4*d])
-	if err != nil {
-		return
+func (f *formatter) ident(n, d int, fmt string, args ...interface{}) (_ int, err error) {
+	if !f.notnl {
+		n, err = f.writef(n, "%s", spaces[:4*d])
+		if err != nil {
+			return
+		}
 	}
 
 	if fmt == "" && len(args) == 0 {
 		return n, err
 	}
 
-	return writef(w, n, fmt, args...)
+	return f.writef(n, fmt, args...)
 }
 
-func writef(w io.Writer, i int, format string, args ...interface{}) (n int, err error) {
-	n, err = fmt.Fprintf(w, format, args...)
+func (f *formatter) writef(i int, format string, args ...interface{}) (n int, err error) {
+	n, err = fmt.Fprintf(f, format, args...)
 	return i + n, err
+}
+
+func (f *formatter) Write(p []byte) (n int, err error) {
+	if len(p) != 0 {
+		f.notnl = p[len(p)-1] != '\n'
+	}
+
+	return f.Writer.Write(p)
 }
 
 func getTag(x reflect.StructField, t, k string) (string, bool) {
@@ -558,3 +676,17 @@ func ptrdata(v reflect.Value) uintptr {
 
 //go:linkname valuePointer reflect.Value.pointer
 func valuePointer(v reflect.Value) unsafe.Pointer
+
+func hashBytes(d []byte) uint32 {
+	return crc32.ChecksumIEEE(d)
+}
+
+func isPrintable(b []byte) bool {
+	for _, r := range string(b) {
+		if !unicode.IsPrint(r) {
+			return false
+		}
+	}
+
+	return true
+}

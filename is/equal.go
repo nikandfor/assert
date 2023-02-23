@@ -4,11 +4,10 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"runtime/debug"
 
 	"github.com/nikandfor/assert/deep"
 )
-
-type ()
 
 func Equal(a, b interface{}) Checker {
 	return CheckerFunc(func(w io.Writer) bool {
@@ -21,6 +20,7 @@ func Equal(a, b interface{}) Checker {
 			}
 
 			fmt.Fprintf(w, "PANIC: %v\n", p)
+			fmt.Fprintf(w, "%s", debug.Stack())
 		}()
 
 		eq := deep.Diff(&buf, a, b)
@@ -60,6 +60,7 @@ func NotEqual(a, b interface{}) Checker {
 			}
 
 			fmt.Fprintf(w, "PANIC: %v\n", p)
+			fmt.Fprintf(w, "%s", debug.Stack())
 		}()
 
 		eq := deep.Diff(&buf, a, b)
