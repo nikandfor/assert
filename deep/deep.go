@@ -307,7 +307,7 @@ func (f *formatter) print(n int, x reflect.Value, d, maxdepth int) (m int, err e
 	tp := x.Type()
 
 	if _, ok := stop[tp]; ok {
-		return f.writef(n, "%#v", x.Interface())
+		return f.writef(n, "%#v", x)
 	}
 
 	if d == maxdepth {
@@ -328,7 +328,7 @@ func (f *formatter) print(n int, x reflect.Value, d, maxdepth int) (m int, err e
 	}
 
 	if _, ok := stop[tp]; ok {
-		return f.writef(n, "%#v", x.Interface())
+		return f.writef(n, "%#v", x)
 	}
 
 	named := x.Type().Name() != x.Kind().String()
