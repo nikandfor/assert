@@ -224,6 +224,12 @@ func equalStructFields(a, b reflect.Value, visited map[visit]struct{}) bool {
 		switch {
 		case ok && f == "false":
 			continue
+		case ok && (f == "nil" || f == "isnil"):
+			if a.Field(i).IsNil() != b.Field(i).IsNil() {
+				return false
+			}
+
+			continue
 		case ok && (f == "pointer" || f == "ptr"):
 			if a.Field(i).Pointer() != b.Field(i).Pointer() {
 				return false
