@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/nikandfor/assert"
-	"github.com/nikandfor/errors"
+	"tlog.app/go/errors"
 )
 
 type (

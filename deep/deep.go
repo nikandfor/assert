@@ -13,7 +13,7 @@ import (
 	"unicode"
 	"unsafe"
 
-	"github.com/nikandfor/errors"
+	"tlog.app/go/errors"
 )
 
 type (
@@ -588,6 +588,9 @@ func (f *formatter) printSlice(n int, x reflect.Value, d, maxdepth int) (m int, 
 		}
 
 		n, err = f.writef(n, "}")
+	}
+	if err != nil {
+		return
 	}
 
 	return n, nil
