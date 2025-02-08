@@ -1,12 +1,12 @@
 package assert_test
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"testing"
 
 	"github.com/nikandfor/assert"
-	"tlog.app/go/errors"
 )
 
 type (
@@ -40,7 +40,7 @@ func TestErrorIs(t *testing.T) {
 
 	tt.reset()
 
-	assert.ErrorIs(tt, errors.Wrap(io.EOF, "wrapped"), io.EOF)
+	assert.ErrorIs(tt, fmt.Errorf("wrapped: %w", io.EOF), io.EOF)
 	checkOK(t, tt)
 
 	tt.reset()

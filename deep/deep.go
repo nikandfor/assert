@@ -12,8 +12,6 @@ import (
 	"time"
 	"unicode"
 	"unsafe"
-
-	"tlog.app/go/errors"
 )
 
 type (
@@ -68,10 +66,10 @@ type (
 var spaces = "                                                                          "
 
 var stop = map[reflect.Type]struct{}{
-	reflect.TypeOf(time.Time{}):      struct{}{},
-	reflect.TypeOf(&time.Location{}): struct{}{},
-	reflect.TypeOf(&big.Int{}):       struct{}{},
-	reflect.TypeOf(&os.File{}):       struct{}{},
+	reflect.TypeOf(time.Time{}):      {},
+	reflect.TypeOf(&time.Location{}): {},
+	reflect.TypeOf(&big.Int{}):       {},
+	reflect.TypeOf(&os.File{}):       {},
 }
 
 func Equal(a, b interface{}) bool {
@@ -294,7 +292,7 @@ func Fprint(w io.Writer, x ...interface{}) (n int, err error) {
 	for i, x := range x {
 		n, err = f.print(n, reflect.ValueOf(x), 0, 10)
 		if err != nil {
-			return n, errors.Wrap(err, "%d", i)
+			return n, fmt.Errorf("arg %d: %w", i, err)
 		}
 	}
 
